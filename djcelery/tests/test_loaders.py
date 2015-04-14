@@ -3,21 +3,22 @@ from __future__ import absolute_import, unicode_literals
 from celery import loaders
 
 from djcelery import loaders as djloaders
+from djcelery.app import app
 from djcelery.tests.utils import unittest
 
 
 class TestDjangoLoader(unittest.TestCase):
 
     def setUp(self):
-        self.loader = djloaders.DjangoLoader()
+        self.loader = djloaders.DjangoLoader(app=app)
 
     def test_get_loader_cls(self):
 
         self.assertEqual(loaders.get_loader_cls('django'),
-                          self.loader.__class__)
+                         self.loader.__class__)
         # Execute cached branch.
         self.assertEqual(loaders.get_loader_cls('django'),
-                          self.loader.__class__)
+                         self.loader.__class__)
 
     def test_on_worker_init(self):
         from django.conf import settings
@@ -39,5 +40,6 @@ class TestDjangoLoader(unittest.TestCase):
         self.assertFalse(djloaders.find_related_module('sys', 'tasks'))
 
     def test_find_related_module_no_related(self):
-        self.assertFalse(djloaders.find_related_module('someapp',
-                                                       'frobulators'))
+        self.assertFalse(
+            djloaders.find_related_module('someapp', 'frobulators'),
+        )

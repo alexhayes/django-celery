@@ -5,6 +5,214 @@
 .. contents::
     :local:
 
+.. _version-3.1.10:
+
+3.1.10
+======
+:release-date: 2014-03-31 04:00 P.M UTC
+
+- Test suite Django version compatibility fixes
+
+    Contributed by Spencer Ellinor
+
+- Admin: Model forms now defines ``fields`` and ``exclude`` attributes
+  (Issue #311)
+
+    Contributed by David Fischer.
+
+- Models: ``get_query_set`` renamed to ``get_queryset`` (but alias available)
+  (Issue #308).
+
+    Contributed by David Fischer.
+
+- Admin: Fixed bug in ``humanize.py``.
+
+    Contributed by koodjo.
+
+- Support for Django 1.8's ``DiscoverRunner``.
+
+    Contributed by David Fischer.
+
+- Snapshot: Fixed time stamp timezone issue.
+
+    Contributed by Michael van Tellingen.
+
+.. _version-3.1.9:
+
+3.1.9
+=====
+:release-date: 2014-02-13 04:35 P.M UTC
+
+- Now depends on Celery 3.1.9
+
+- TestSuiteRunner should now be working again.
+
+- Database result backend now works with Python 3.
+
+- The `celery worker' management command now gives a proper error message
+  when positional arguments are provided.
+
+    Fix contributed by Brett Gibson.
+
+- No longer uses manual transaction management to be compatible with Django
+  1.6.
+
+    This will probably decrease performance considerably, e.g. for clean up
+    of celerycam events and for celerybeat which now needs to commit the
+    transaction for every operation.
+
+- The `celery` management command now performs validation checks (Issue #253).
+
+- Url handlers: Fixed compatibility with Django 1.2
+
+    Fix contributed by dongweiming.
+
+.. _version-3.1.1:
+
+3.1.1
+=====
+:release-date: 2013-11-11 07:30 P.M UTC
+
+- Fixed Python 3 compatibility problems.
+
+    Fix contributed by Anton Novosyolov.
+
+- Fixed compatibility with Django pre 1.6 (Issue #285).
+
+- celerycam: Fixed error when expire function returned None (Issue #210)
+
+- DatabaseScheduler: Now automatically disables periodic task
+  if the schedule model it was connected is deleted (Issue #208).
+
+- Test runner now sets always eager settings on the app configuration.
+  (Issue #201).
+
+- TaskRunnerStoringResults stored results in the wrong table.
+
+    Fix contributed by Charlie DeTar.
+
+- Celerycam: Fixed problem when USE_TZ not enabled.
+
+    Fix contributed by Jens Alm
+
+- Celerycam: Fixed timezone problem with expires and eta
+  (Issue #275 + Issue #153).
+
+    Fix contributed by Alvaro Vega.
+
+- Autodiscovery now warns instead of propagating import
+  errors (Issue #226).
+
+.. _version-3.1.0:
+
+3.1.0
+=====
+:release-date: 2013-11-10 1:04 A.M UTC
+
+.. note::
+
+    Please test this release in staging first and
+    make sure you read the Celery 3.1 changelog at:
+
+    http://docs.celeryproject.org/en/latest/whatsnew-3.1.html
+
+    If you upgrade from an old version then you must also
+    double check that you have 'djcelery.setup_loader()'
+    in your settings.py!
+
+- Tests passing on Django 1.6
+
+- Now works with Celery 3.1
+
+.. _version-3.0.23:
+
+3.0.23
+======
+:release-date: 2013-09-03 02:00 P.M BST
+
+- Now depends on celery 3.0.23
+
+- ``djcelery.contrib.test_runner`` used naive datetimes
+  resulting in ``RuntimeWarning`` (Issue #242).
+
+- Cache backend now compatible with Django 1.5.
+
+    Fix contributed by Weipin Xia.
+
+- DatabaseScheduler: Periodic task admin form now validates args and kwargs.
+
+    Contributed by Justin Quick.
+
+- DatabaseScheduler: IntervalSchedule and CrontabSchedule will now be ordered
+  in a more natural way.
+
+    Contributed by Eugene Nagornyi.
+
+- Django Admin monitor:  Worker and Task now supports ``extra_context``.
+
+    Fix contributed by @realitycheck.
+
+- Django Admin monitor: Now properly formats task tracebacks.
+
+    Fix contributed by Vladislav Poluhin.
+
+.. _version-3.0.21:
+
+3.0.21
+======
+:release-date: 2013-08-26 04:00 P.M BST
+
+- Now depends on Celery 3.0.21
+
+- Fixed problems with time zones.
+
+    Fix contributed by Jeffrey Hu
+
+- Now compatible with Django 2.5
+
+    Fixes contributed by Jay States, AlexRiina
+
+- Experimental support for Python 3 (using 2to3).
+
+.. _version-3.0.17:
+
+3.0.17
+======
+:release-date: 2013-03-28 05:00 P.M BST
+
+- Now depends on celery 3.0.17
+
+- Tests passing on Django 1.5
+
+- Fixed problem with the deprecated ``celeryd_multi`` command
+  when using the ``--workdir`` option.
+
+- Fixed current date handling when used with Django 1.5
+  and ``USE_TZ`` is disabled.
+
+    Fix contributed by Theo Spears.
+
+- Now makes sure to not attempt converting already
+  aware datetimes.
+
+    Fix contributed by Idan Zalzberg.
+
+- Admin Monitor: Fixed timezone problem (Issue #183)
+
+    Fix contributed by Scott Rubin.
+
+- Admin Monitor: Better formatting for task tracebacks.
+
+    Contributed by Vladislav Poluhin.
+
+- DatabaseScheduler: Now logs if a periodic task is automatically
+  disabled because of invalid JSON in args/kwargs.
+
+    Contributed by Gnrhxni.
+
+- celerycam: Do update and delete queries in the same transaction
+  when expiring old items.
+
 .. _version-3.0.11:
 
 3.0.11

@@ -43,8 +43,13 @@ DATABASE_ERRORS = ((DatabaseError, ) +
                    _lite_database_errors +
                    _oracle_database_errors)
 
+
 try:
     from django.utils import timezone
+    is_aware = timezone.is_aware
+
+    # see Issue #222
+    now_localtime = getattr(timezone, 'template_localtime', timezone.localtime)
 
     def make_aware(value):
         if getattr(settings, 'USE_TZ', False):
@@ -63,14 +68,35 @@ try:
         return value
 
     def now():
-        return timezone.localtime(timezone.now())
+        if getattr(settings, 'USE_TZ', False):
+            return now_localtime(timezone.now())
+        else:
+            return timezone.now()
 
 except ImportError:
     now = datetime.now
     make_aware = make_naive = lambda x: x
+    is_aware = lambda x: False
 
 
 def maybe_make_aware(value):
+    if isinstance(value, datetime) and is_aware(value):
+        return value
     if value:
         return make_aware(value)
     return value
+
+
+def is_database_scheduler(scheduler):
+    if not scheduler:
+        return False
+    from kombu.utils import symbol_by_name
+    from .schedulers import DatabaseScheduler
+    return issubclass(symbol_by_name(scheduler), DatabaseScheduler)
+
+
+def fromtimestamp(value):
+    if getattr(settings, 'CELERY_ENABLE_UTC', False):
+        return datetime.utcfromtimestamp(value)
+    else:
+        return datetime.fromtimestamp(value)

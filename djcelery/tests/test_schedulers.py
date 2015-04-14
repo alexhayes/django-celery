@@ -2,16 +2,17 @@ from __future__ import absolute_import
 
 from datetime import datetime, timedelta
 from itertools import count
-from time import time
 
+from celery.five import monotonic
 from celery.schedules import schedule, crontab
-from celery.utils.timeutils import timedelta_seconds
 
 from djcelery import schedulers
 from djcelery import celery
+from djcelery.app import app
 from djcelery.models import PeriodicTask, IntervalSchedule, CrontabSchedule
 from djcelery.models import PeriodicTasks
 from djcelery.tests.utils import unittest
+from djcelery.compat import unicode
 
 
 def create_model_interval(schedule, **kwargs):
@@ -23,7 +24,9 @@ def create_model_crontab(schedule, **kwargs):
     return create_model(crontab=CrontabSchedule.from_schedule(schedule),
                         **kwargs)
 
-_next_id = count(0).next
+
+_next_id_get = count(0)
+_next_id = lambda: next(_next_id_get)
 
 
 def create_model(Model=PeriodicTask, **kwargs):
@@ -109,7 +112,7 @@ class test_DatabaseScheduler(unittest.TestCase):
         m3 = create_model_crontab(crontab(minute='2,4,5'))
         for obj in m1, m2, m3:
             obj.save()
-        self.s = self.Scheduler()
+        self.s = self.Scheduler(app=app)
         self.m1 = PeriodicTask.objects.get(name=m1.name)
         self.m2 = PeriodicTask.objects.get(name=m2.name)
         self.m3 = PeriodicTask.objects.get(name=m3.name)
@@ -149,7 +152,7 @@ class test_DatabaseScheduler(unittest.TestCase):
 
     def test_should_sync(self):
         self.assertTrue(self.s.should_sync())
-        self.s._last_sync = time()
+        self.s._last_sync = monotonic()
         self.assertFalse(self.s.should_sync())
         self.s._last_sync -= self.s.sync_every
         self.assertTrue(self.s.should_sync())
@@ -180,7 +183,7 @@ class test_DatabaseScheduler(unittest.TestCase):
         e1 = self.s.schedule[self.m2.name]
 
         # Increment the entry (but make sure it doesn't sync)
-        self.s._last_sync = time()
+        self.s._last_sync = monotonic()
         e2 = self.s.schedule[e1.name] = self.s.reserve(e1)
         self.assertEqual(self.s.flushed, 1)
 
@@ -234,17 +237,17 @@ class test_models(unittest.TestCase):
     def test_PeriodicTask_unicode_interval(self):
         p = create_model_interval(schedule(timedelta(seconds=10)))
         self.assertEqual(unicode(p),
-                        '{0}: every 10.0 seconds'.format(p.name))
+                         '{0}: every 10.0 seconds'.format(p.name))
 
     def test_PeriodicTask_unicode_crontab(self):
         p = create_model_crontab(crontab(hour='4, 5', day_of_week='4, 5'))
         self.assertEqual(unicode(p),
-                        '{0}: * 4,5 4,5 * * (m/h/d/dM/MY)'.format(p.name))
+                         '{0}: * 4,5 4,5 * * (m/h/d/dM/MY)'.format(p.name))
 
     def test_PeriodicTask_schedule_property(self):
         p1 = create_model_interval(schedule(timedelta(seconds=10)))
         s1 = p1.schedule
-        self.assertEqual(timedelta_seconds(s1.run_every), 10)
+        self.assertEqual(s1.run_every.total_seconds(), 10)
 
         p2 = create_model_crontab(crontab(hour='4, 5',
                                           minute='10,20,30',

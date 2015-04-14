@@ -1,5 +1,9 @@
 from __future__ import absolute_import
 
+import logging
+
+from multiprocessing.util import Finalize
+
 from anyjson import loads, dumps
 from celery import current_app
 from celery import schedules
@@ -7,14 +11,15 @@ from celery.beat import Scheduler, ScheduleEntry
 from celery.utils.encoding import safe_str, safe_repr
 from celery.utils.log import get_logger
 from celery.utils.timeutils import is_naive
-from kombu.utils.finalize import Finalize
 
 from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
 
+from .db import commit_on_success
 from .models import (PeriodicTask, PeriodicTasks,
                      CrontabSchedule, IntervalSchedule)
 from .utils import DATABASE_ERRORS, make_aware
+from .compat import itervalues
 
 # This scheduler must wake up more frequently than the
 # regular of 5 minutes because it needs to take external
@@ -38,16 +43,20 @@ class ModelEntry(ScheduleEntry):
         self.app = current_app._get_current_object()
         self.name = model.name
         self.task = model.task
-        self.schedule = model.schedule
+        try:
+            self.schedule = model.schedule
+        except model.DoesNotExist:
+            logger.error('Schedule was removed from database')
+            logger.warning('Disabling %s', self.name)
+            self._disable(model)
         try:
             self.args = loads(model.args or '[]')
             self.kwargs = loads(model.kwargs or '{}')
         except ValueError:
-            # disable because of error deserializing args/kwargs
-            model.no_changes = True
-            model.enabled = False
-            model.save()
-            raise
+            logging.error('Failed to serialize arguments for %s.', self.name,
+                          exc_info=1)
+            logging.warning('Disabling %s', self.name)
+            self._disable(model)
 
         self.options = {'queue': model.queue,
                         'exchange': model.exchange,
@@ -63,6 +72,11 @@ class ModelEntry(ScheduleEntry):
             self.last_run_at = self.last_run_at.replace(tzinfo=None)
         assert orig.hour == self.last_run_at.hour  # timezone sanity
 
+    def _disable(self, model):
+        model.no_changes = True
+        model.enabled = False
+        model.save()
+
     def is_due(self):
         if not self.model.enabled:
             return False, 5.0   # 5 second delay for re-enable.
@@ -71,12 +85,12 @@ class ModelEntry(ScheduleEntry):
     def _default_now(self):
         return self.app.now()
 
-    def next(self):
+    def __next__(self):
         self.model.last_run_at = self.app.now()
         self.model.total_run_count += 1
         self.model.no_changes = True
         return self.__class__(self.model)
-    __next__ = next  # for 2to3
+    next = __next__  # for 2to3
 
     def save(self):
         # Object may not be synchronized, so only
@@ -112,8 +126,9 @@ class ModelEntry(ScheduleEntry):
         fields['queue'] = options.get('queue')
         fields['exchange'] = options.get('exchange')
         fields['routing_key'] = options.get('routing_key')
-        return cls(PeriodicTask._default_manager.update_or_create(name=name,
-                                                            defaults=fields))
+        return cls(PeriodicTask._default_manager.update_or_create(
+            name=name, defaults=fields,
+        ))
 
     def __repr__(self):
         return '<ModelEntry: {0} {1}(*{2}, **{3}) {{4}}>'.format(
@@ -134,9 +149,10 @@ class DatabaseScheduler(Scheduler):
         self._dirty = set()
         self._finalize = Finalize(self, self.sync, exitpriority=5)
         Scheduler.__init__(self, *args, **kwargs)
-        self.max_interval = (kwargs.get('max_interval')
-                           or self.app.conf.CELERYBEAT_MAX_LOOP_INTERVAL
-                           or DEFAULT_MAX_INTERVAL)
+        self.max_interval = (
+            kwargs.get('max_interval') or
+            self.app.conf.CELERYBEAT_MAX_LOOP_INTERVAL or
+            DEFAULT_MAX_INTERVAL)
 
     def setup_schedule(self):
         self.install_default_entries(self.schedule)
@@ -164,7 +180,7 @@ class DatabaseScheduler(Scheduler):
                 pass  # not in transaction management.
 
             last, ts = self._last_timestamp, self.Changes.last_change()
-        except DATABASE_ERRORS, exc:
+        except DATABASE_ERRORS as exc:
             error('Database gave error: %r', exc, exc_info=1)
             return False
         try:
@@ -181,12 +197,11 @@ class DatabaseScheduler(Scheduler):
         self._dirty.add(new_entry.name)
         return new_entry
 
-    @transaction.commit_manually
     def sync(self):
         info('Writing entries...')
         _tried = set()
         try:
-            try:
+            with commit_on_success():
                 while self._dirty:
                     try:
                         name = self._dirty.pop()
@@ -194,12 +209,7 @@ class DatabaseScheduler(Scheduler):
                         self.schedule[name].save()
                     except (KeyError, ObjectDoesNotExist):
                         pass
-            except:
-                transaction.rollback()
-                raise
-            else:
-                transaction.commit()
-        except DATABASE_ERRORS, exc:
+        except DATABASE_ERRORS as exc:
             # retry later
             self._dirty |= _tried
             error('Database error while sync: %r', exc, exc_info=1)
@@ -209,17 +219,20 @@ class DatabaseScheduler(Scheduler):
         for name, entry in dict_.items():
             try:
                 s[name] = self.Entry.from_entry(name, **entry)
-            except Exception, exc:
+            except Exception as exc:
                 error(ADD_ENTRY_ERROR, name, exc, entry)
         self.schedule.update(s)
 
     def install_default_entries(self, data):
         entries = {}
         if self.app.conf.CELERY_TASK_RESULT_EXPIRES:
-            entries.setdefault('celery.backend_cleanup', {
+            entries.setdefault(
+                'celery.backend_cleanup', {
                     'task': 'celery.backend_cleanup',
                     'schedule': schedules.crontab('0', '4', '*'),
-                    'options': {'expires': 12 * 3600}})
+                    'options': {'expires': 12 * 3600},
+                },
+            )
         self.update_from_dict(entries)
 
     @property
@@ -236,7 +249,8 @@ class DatabaseScheduler(Scheduler):
         if update:
             self.sync()
             self._schedule = self.all_as_schedule()
-            debug('Current schedule:\n%s',
-                  '\n'.join(repr(entry)
-                        for entry in self._schedule.itervalues()))
+            if logger.isEnabledFor(logging.DEBUG):
+                debug('Current schedule:\n%s', '\n'.join(
+                    repr(entry) for entry in itervalues(self._schedule)),
+                )
         return self._schedule

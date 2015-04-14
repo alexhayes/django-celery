@@ -3,9 +3,9 @@ from __future__ import absolute_import
 import os
 import imp
 import importlib
-import warnings
 
 from datetime import datetime
+from warnings import warn
 
 from celery import signals
 from celery.datastructures import DictAttribute
@@ -36,8 +36,9 @@ class DjangoLoader(BaseLoader):
     _db_reuse = 0
 
     override_backends = {
-            'database': 'djcelery.backends.database.DatabaseBackend',
-            'cache': 'djcelery.backends.cache.CacheBackend'}
+        'database': 'djcelery.backends.database.DatabaseBackend',
+        'cache': 'djcelery.backends.cache.CacheBackend',
+    }
 
     def __init__(self, *args, **kwargs):
         super(DjangoLoader, self).__init__(*args, **kwargs)
@@ -57,13 +58,13 @@ class DjangoLoader(BaseLoader):
         self.configured = True
         # Default backend needs to be the database backend for backward
         # compatibility.
-        backend = getattr(settings, 'CELERY_RESULT_BACKEND', None) or \
-                    getattr(settings, 'CELERY_BACKEND', None)
+        backend = (getattr(settings, 'CELERY_RESULT_BACKEND', None) or
+                   getattr(settings, 'CELERY_BACKEND', None))
         if not backend:
             settings.CELERY_RESULT_BACKEND = 'database'
         if NO_TZ:
             if getattr(settings, 'CELERY_ENABLE_UTC', None):
-                warnings.warn('CELERY_ENABLE_UTC requires Django 1.4+')
+                warn('CELERY_ENABLE_UTC requires Django 1.4+')
             settings.CELERY_ENABLE_UTC = False
         return DictAttribute(settings)
 
@@ -71,12 +72,15 @@ class DjangoLoader(BaseLoader):
         try:
             funs = [conn.close for conn in db.connections]
         except AttributeError:
-            funs = [db.close_connection]  # pre multidb
+            if hasattr(db, 'close_old_connections'):  # Django 1.6+
+                funs = [db.close_old_connections]
+            else:
+                funs = [db.close_connection]  # pre multidb
 
         for close in funs:
             try:
                 close()
-            except DATABASE_ERRORS, exc:
+            except DATABASE_ERRORS as exc:
                 str_exc = str(exc)
                 if 'closed' not in str_exc and 'not connected' not in str_exc:
                     raise
@@ -129,8 +133,8 @@ class DjangoLoader(BaseLoader):
 
     def warn_if_debug(self, **kwargs):
         if settings.DEBUG:
-            warnings.warn('Using settings.DEBUG leads to a memory leak, never '
-                          'use this setting in production environments!')
+            warn('Using settings.DEBUG leads to a memory leak, never '
+                 'use this setting in production environments!')
 
     def import_default_modules(self):
         super(DjangoLoader, self).import_default_modules()
@@ -172,7 +176,7 @@ def autodiscover():
     _RACE_PROTECTION = True
     try:
         return filter(None, [find_related_module(app, 'tasks')
-                                for app in settings.INSTALLED_APPS])
+                             for app in settings.INSTALLED_APPS])
     finally:
         _RACE_PROTECTION = False
 
@@ -183,6 +187,11 @@ def find_related_module(app, related_name):
 
     try:
         app_path = importlib.import_module(app).__path__
+    except ImportError as exc:
+        warn('Autodiscover: Error importing %s.%s: %r' % (
+            app, related_name, exc,
+        ))
+        return
     except AttributeError:
         return
 

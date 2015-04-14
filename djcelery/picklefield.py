@@ -17,16 +17,28 @@ from __future__ import absolute_import, unicode_literals
 from base64 import b64encode, b64decode
 from zlib import compress, decompress
 
+from celery.five import with_metaclass
 from celery.utils.serialization import pickle
+from kombu.utils.encoding import bytes_to_str, str_to_bytes
 
 from django.db import models
 
 try:
     from django.utils.encoding import force_text
 except ImportError:
-    from django.utils.encoding import force_unicode as force_text
+    from django.utils.encoding import force_unicode as force_text  # noqa
 
 DEFAULT_PROTOCOL = 2
+
+NO_DECOMPRESS_HEADER = b'\x1e\x00r8d9qwwerwhA@'
+
+
+@with_metaclass(models.SubfieldBase, skip_attrs=set([
+    'db_type',
+    'get_db_prep_save'
+    ]))
+class BaseField(models.Field):
+    pass
 
 
 class PickledObject(str):
@@ -35,30 +47,31 @@ class PickledObject(str):
 
 def maybe_compress(value, do_compress=False):
     if do_compress:
-        return compress(value)
+        return compress(str_to_bytes(value))
     return value
 
 
 def maybe_decompress(value, do_decompress=False):
     if do_decompress:
-        return decompress(value)
+        if str_to_bytes(value[:15]) != NO_DECOMPRESS_HEADER:
+            return decompress(str_to_bytes(value))
     return value
 
 
 def encode(value, compress_object=False, pickle_protocol=DEFAULT_PROTOCOL):
-    return b64encode(maybe_compress(
-                pickle.dumps(value, pickle_protocol), compress_object))
+    return bytes_to_str(b64encode(maybe_compress(
+        pickle.dumps(value, pickle_protocol), compress_object),
+    ))
 
 
 def decode(value, compress_object=False):
     return pickle.loads(maybe_decompress(b64decode(value), compress_object))
 
 
-class PickledObjectField(models.Field):
-    __metaclass__ = models.SubfieldBase
+class PickledObjectField(BaseField):
 
     def __init__(self, compress=False, protocol=DEFAULT_PROTOCOL,
-            *args, **kwargs):
+                 *args, **kwargs):
         self.compress = compress
         self.protocol = protocol
         kwargs.setdefault('editable', False)
@@ -101,5 +114,6 @@ try:
 except ImportError:
     pass
 else:
-    add_introspection_rules([],
-            [r'^djcelery\.picklefield\.PickledObjectField'])
+    add_introspection_rules(
+        [], [r'^djcelery\.picklefield\.PickledObjectField'],
+    )

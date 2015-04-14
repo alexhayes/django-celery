@@ -1,5 +1,6 @@
 from __future__ import absolute_import, unicode_literals
 
+import django
 import os
 import sys
 
@@ -13,6 +14,8 @@ DatabaseWrapper objects created in a thread can only \
 be used in that same thread.  The object with alias '{0}' \
 was created in thread id {1} and this is thread id {2}.\
 """
+
+VALIDATE_MODELS = not django.VERSION >= (1, 7)
 
 
 def patch_thread_ident():
@@ -37,13 +40,15 @@ def patch_thread_ident():
 
             def _validate_thread_sharing(self):
                 if (not self.allow_thread_sharing
-                    and self._thread_ident != _get_ident()):
-                        raise DatabaseError(DB_SHARED_THREAD.format(
-                                self.alias, self._thread_ident, _get_ident()))
+                        and self._thread_ident != _get_ident()):
+                    raise DatabaseError(
+                        DB_SHARED_THREAD % (
+                            self.alias, self._thread_ident, _get_ident()),
+                    )
 
             BaseDatabaseWrapper.__init__ = _init
-            BaseDatabaseWrapper.validate_thread_sharing \
-                    = _validate_thread_sharing
+            BaseDatabaseWrapper.validate_thread_sharing = \
+                _validate_thread_sharing
 
         patch_thread_ident.called = True
     except ImportError:
@@ -53,12 +58,15 @@ patch_thread_ident()
 
 class CeleryCommand(BaseCommand):
     options = BaseCommand.option_list
-    skip_opts = ['--app', '--loader', '--config']
+    skip_opts = ['--app', '--loader', '--config', '--no-color']
+    requires_model_validation = VALIDATE_MODELS
     keep_base_opts = False
+    stdout, stderr = sys.stdout, sys.stderr
 
     def get_version(self):
         return 'celery {c.__version__}\ndjango-celery {d.__version__}'.format(
-                    c=celery, d=djcelery)
+            c=celery, d=djcelery,
+        )
 
     def execute(self, *args, **options):
         broker = options.get('broker')
@@ -77,6 +85,9 @@ class CeleryCommand(BaseCommand):
         acc = []
         broker = None
         for i, arg in enumerate(argv):
+            # --settings and --pythonpath are also handled
+            # by BaseCommand.handle_default_options, but that is
+            # called with the resulting options parsed by optparse.
             if '--settings=' in arg:
                 _, settings_module = arg.split('=')
                 os.environ['DJANGO_SETTINGS_MODULE'] = settings_module
@@ -98,7 +109,9 @@ class CeleryCommand(BaseCommand):
         sys.stderr.write('\n')
         sys.exit()
 
+    def _is_unwanted_option(self, option):
+        return option._long_opts and option._long_opts[0] in self.skip_opts
+
     @property
     def option_list(self):
-        return [x for x in self.options
-                    if x._long_opts[0] not in self.skip_opts]
+        return [x for x in self.options if not self._is_unwanted_option(x)]
